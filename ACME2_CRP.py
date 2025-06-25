@@ -11,6 +11,7 @@ from tensorflow.keras.models import load_model
 import joblib
 import sys
 
+
 #....CHANGED...........................................................................................................
 if "check_bd_clicked" not in st.session_state:
     st.session_state["check_bd_clicked"] = False
@@ -42,7 +43,7 @@ model_folder_path = os.path.join(MAINFOLDER, "Models")
 uploaded_files = []  # List to keep track of uploaded files
 
 # Streamlit UI
-st.title("Breakdown Predictor")
+st.title("Breakdown Predictor-ACME 2(CRP)")
 st.markdown("Upload your files, and they will be preprocessed accordingly.")
 
 
@@ -111,7 +112,6 @@ if st.button("Save Files"):
 
 ################# data preprocessing         ###################
 
-
 import os
 import pandas as pd
 import numpy as np
@@ -132,7 +132,7 @@ def process_data():
     # List of 12 unique asset names
     assets_list = [
         "ACME-2 GM-1 GB IP DE", "ACME-2 GM-1 MDE",
-            "ACME-2 GM-2 GB IP DE ", "ACME-2 GM-2 MDE", "ACME-2 GM-3 GB IP DE ", "ACME-2 GM-3 MDE", "ACME-2 GM-4 GB IP DE ", "ACME-2 GM-4 MDE"]
+            "ACME-2 GM-2 GB IP DE", "ACME-2 GM-2 MDE", "ACME-2 GM-3 GB IP DE", "ACME-2 GM-3 MDE", "ACME-2 GM-4 GB IP DE", "ACME-2 GM-4 MDE"]
 
 
     # Columns to extract for each asset, corresponding to F, I, L, O, R, U
@@ -222,165 +222,87 @@ if st.button('Preprocess Data'):
     process_data()
 
 
+
+
+
+
 ##########################  Classification ###############################
 
-import tensorflow as tf
-import random
+# 🚀 Install if not already done:
+# pip install pandas numpy scikit-learn xgboost imbalanced-learn tensorflow joblib streamlit openpyxl
+
 import streamlit as st
-import os
-import pandas as pd
 import numpy as np
+import pandas as pd
 import joblib
+import tensorflow as tf
+import os
+import random
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report
 from imblearn.over_sampling import SMOTE
-import xgboost as xgb
-from scikeras.wrappers import KerasClassifier
+from xgboost import XGBClassifier
 from sklearn.ensemble import VotingClassifier
+from scikeras.wrappers import KerasClassifier
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
+from collections import Counter
 
-# Set random seed for reproducibility
+# ---------------------
+# ⚙️ Set random seed
+# ---------------------
 def set_random_seed(seed=42):
     np.random.seed(seed)
-    random.seed(seed)
     tf.random.set_seed(seed)
+    random.seed(seed)
+# ---------------------
+# 🔮 Prediction Function
+# ---------------------
+def predict_future_breakdown(test_file_path, model_folder_path):
+    set_random_seed(seed=42)
+    df = pd.read_excel(test_file_path)
+    X = df.iloc[:, 3:-1].values  # All features
 
-# Define the training function
-def train_ensemble_model(training_file_path, model_folder_path):
-    def load_data(file_path):
-        df = pd.read_excel(file_path)
-        X = df.iloc[:, 3:-1].values  # Features (assuming columns 3 to second last)
-        y = df.iloc[:,-1].values 
-        #y = df['Code'].values  # Target column
-        return X, y
+    scaler = joblib.load(os.path.join(model_folder_path, "scaler_shifted.pkl"))
+    X_scaled = scaler.transform(X)
 
-    def preprocess_data(X, y):
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+    model = joblib.load(os.path.join(model_folder_path, "ensemble_shifted_model.pkl"))
+    preds = model.predict(X_scaled)
 
-        # Save the scaler
-        joblib.dump(scaler, os.path.join(model_folder_path, "scaler_ACME2.pkl"))
+    labels = ["Code 0", "Code 1", "Code 2"]
+    result_labels = [labels[p] for p in preds]
 
-        # Split into training and validation sets
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, shuffle=True)
+    non_zero = [lbl for lbl in result_labels if lbl != "Code 0"]
+    if non_zero:
+        return f"🚨 Potential Breakdown(s): {', '.join(set(non_zero))}"
+    else:
+        return "✅ No BD predicted"
 
-        # Handle imbalance with SMOTE
-        smote = SMOTE(random_state=42)
-        X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
-        
-        return X_resampled, X_test, y_resampled, y_test
-
-    def build_nn_model():
-        model = Sequential()
-        model.add(Dense(128, activation='relu', input_shape=(X_resampled.shape[1],)))
-        model.add(Dropout(0.2))
-        model.add(Dense(64, activation='relu'))
-        model.add(Dropout(0.2))
-        model.add(Dense(32, activation='relu'))
-        model.add(Dense(2, activation='softmax'))  # 4 output units for the 4 classes
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])  # Use sparse_categorical_crossentropy
-        return model
-
-    # Set random seed
-    set_random_seed()
-
-    # Load and preprocess data
-    X, y = load_data(training_file_path)
-    X_resampled, X_test, y_resampled, y_test = preprocess_data(X, y)
-
-    # Class weights for Keras model
-    class_weights = {0: 0.1, 1: 700 }
-
-    # Build Keras model
-    nn_model = KerasClassifier(model=build_nn_model, epochs=100, batch_size=32, verbose=0, class_weight=class_weights)
-
-    # Calculate sample weights for XGBoost
-    sample_weights = np.array([class_weights[int(label)] for label in y_resampled])
-
-    # XGBoost model
-    xgb_model = xgb.XGBClassifier(objective='multi:softmax', num_class=2, eval_metric='mlogloss', sample_weight=sample_weights, random_state=42)
-
-    # Ensemble model
-    ensemble_model = VotingClassifier(estimators=[
-        ('xgb', xgb_model),
-        ('nn', nn_model)
-    ], voting='soft')
-
-    # Train the ensemble model
-    ensemble_model.fit(X_resampled, y_resampled)
-
-    # Save the trained model
-    joblib.dump(ensemble_model, os.path.join(model_folder_path, "ensemble_ACME2.pkl"))
-    st.success("Ensemble model training completed and saved!")
-
-# Define the prediction function
-def predict_ensemble(test_file_path, model_folder_path):
-    def load_test_data(file_path):
-        df = pd.read_excel(file_path)
-        X_test = df.iloc[:, 3:-1].values
-        return df, X_test
-
-    def preprocess_test_data(X_test):
-        scaler = joblib.load(os.path.join(model_folder_path, "scaler_ACME2.pkl"))
-        X_test_scaled = scaler.transform(X_test)
-        return X_test_scaled
-
-    def predict(X_test_scaled):
-        nn_model = joblib.load(os.path.join(model_folder_path, "ensemble_ACME2.pkl"))
-        predictions = nn_model.predict(X_test_scaled)
-        return predictions
-
-    set_random_seed()
-
-    try:
-        df, X_test = load_test_data(test_file_path)
-        X_test_scaled = preprocess_test_data(X_test)
-        predictions = predict(X_test_scaled)
-
-        breakdown_codes = ["Code 0", "Code 1"]
-        predicted_labels = [breakdown_codes[p] for p in predictions]
-
-        # Check if any non-zero breakdown code (Code 1, 2, or 3) is predicted
-        non_zero_codes = [code for code in predicted_labels if "Code 1" in code ]
-        
-        if non_zero_codes:
-            unique_non_zero_codes = set(non_zero_codes)
-            return f"Breakdown of {', '.join(unique_non_zero_codes)} might occur."
-        else:
-            return "No BD predicted"
-    except Exception as e:
-        return f"Error: {e}"
-
-# Streamlit app UI
-st.title("Breakdown Code Classification")
+# ---------------------
+# 🌐 Streamlit UI
+# ---------------------
+st.title("🔮 Predict Breakdown")
 
 
-#...CHNAGED................................................................................................................................................
-
-if st.button("Check BD Classification"):
-    with st.spinner("Checking breakdown..."):
-        #train_ensemble_model(training_file_path, model_folder_path)  # Train the model
-        result = predict_ensemble(test_file_path, model_folder_path)  # Predict breakdown
-        
-        # Store the result in session state
-        st.session_state["bd_output"] = result
-        
-        # Update session state based on the output
-        if result != "No BD predicted":
-            st.session_state["check_bd_clicked"] = True
-        else:
-            st.session_state["check_bd_clicked"] = False
-    
-    # Display the result
-    st.write(result)
-    st.success("Prediction complete!")
+if st.button("Predict Breakdown"):
+    if test_file_path:
+        with st.spinner("Predicting..."):
+            result = predict_future_breakdown(test_file_path, model_folder_path)
+            st.subheader("🔍 Result:")
+            st.write(result)
+            st.session_state["bd_output"] = result
+            
+            if result != "✅ No BD predicted":
+                st.session_state["check_bd_clicked"] = True
+            else:
+                st.session_state["check_bd_clicked"] = False
+    else:
+        st.warning("Please upload today's data for prediction.")
 
 
 
-#################################        time prediction             #############################
 
+# ################################        time prediction             #############################
 import streamlit as st
 import os
 import pandas as pd
@@ -397,47 +319,9 @@ import numpy as np
 # Function to set random seed for reproducibility
 def set_random_seed(seed=42):
     np.random.seed(seed)
+    
 
-# Define the training function
-def train_model(training_file_path):
-    def load_data(file_path):
-        df = pd.read_excel(file_path, sheet_name="Time")
-        X = df.iloc[:, 1:-2].values
-        y = df.iloc[:, -2].values
-        return X, y
 
-    def preprocess_data(X, y):
-        mask = (y <= 15)# Time to breakdown less than 72 hours
-        X_filtered = X[mask]
-        y_filtered = y[mask]
-        
-        # Use a fixed random_state to ensure reproducibility
-        X_train, X_val, y_train, y_val = train_test_split(X_filtered, y_filtered, test_size=0.01, random_state=42)
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
-        joblib.dump(scaler, os.path.join(model_folder_path, 'scalerfinpv1.pkl'))
-        return X_train_scaled, X_val_scaled, y_train, y_val
-
-    def build_model(input_shape):
-        model = Sequential()
-        model.add(Dense(128, input_dim=input_shape, activation='relu'))
-        model.add(Dense(64, activation='relu'))
-        model.add(Dense(32, activation='relu'))
-        model.add(Dense(1, activation='linear'))
-        model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae'])
-        return model
-
-    # Set random seed for reproducibility
-    set_random_seed()
-
-    X, y = load_data(training_file_path)
-    X_train, X_val, y_train, y_val = preprocess_data(X, y)
-    model = build_model(X_train.shape[1])
-
-    #early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=100, batch_size=32)
-    model.save(os.path.join(model_folder_path, 'trained_modelFINpv1.h5'))
 
 # Define the prediction function
 def predict_time(test_file_path):
@@ -449,15 +333,15 @@ def predict_time(test_file_path):
         return df, X_test, serial_numbers, times
 
     def preprocess_test_data(X_test):
-        scaler = joblib.load(os.path.join(model_folder_path, 'scalerfinpv1.pkl'))
+        scaler = joblib.load(os.path.join(model_folder_path, 'scaler_time_changed.pkl'))
         X_test_scaled = scaler.transform(X_test)
         return X_test_scaled
 
     def predict_time_to_breakdown(X_test_scaled):
-        model = load_model(os.path.join(model_folder_path, 'trained_modelFINpv1.h5'))
+        model = load_model(os.path.join(model_folder_path, 'trained_time_changed.h5'))
         predictions = model.predict(X_test_scaled)
         return predictions
-        
+
     def calculate_time_difference(times, predictions):
         time_to_breakdown_with_time = []
         base_time = datetime.strptime(times[0],'%I:%M %p')
@@ -468,7 +352,6 @@ def predict_time(test_file_path):
             adjusted_time_to_bd = prediction[0] + time_difference
             time_to_breakdown_with_time.append(adjusted_time_to_bd)
         return time_to_breakdown_with_time
-
     #CHANGE.........................................................................................................................
     def find_minimum_maximum_and_mode_interval(time_to_breakdown_with_time):
         # Filter out negative times
@@ -517,23 +400,14 @@ def predict_time(test_file_path):
         predictions_with_time = calculate_time_difference(times, predictions)
     
         # Find the minimum, maximum, and mode interval
-        min_time, max_time, mode_interval, mode_frequency = find_minimum_maximum_and_mode_interval(predictions_with_time)
-      
-        # Return the final weighted breakdown time
-        # Choose the output based on the condition
-        final_output_time = max(24,min(24 + (0.4*min_time + 0.6*max_time),48))
-        
+        min_time, max_time, mode_interval, mode_frequency = find_minimum_maximum_and_mode_interval(predictions_with_time)    
+        final_output_time = 0.4 * min_time + 0.6 * max_time
         # Return the final breakdown time
         return (f"Breakdown might occur in approximately w.r.t 6 AM Data date: \n"
         f"{final_output_time:.2f} hours")
 
     except Exception as e:
         return f"Error: {e}"
-   
-
-    
-
-
 # Streamlit app UI
 st.title("Time Prediction")
 
@@ -543,13 +417,13 @@ st.title("Time Prediction")
 
 if st.button(("Predict Time"), disabled=not st.session_state["check_bd_clicked"]):
     if st.session_state["bd_output"] == "No BD predicted":
-        st.error("No breakdown predicted. Cannot proceed with time prediction.")
+         st.error("No breakdown predicted. Cannot proceed with time prediction.")
     else:
-        with st.spinner("Training the model and making predictions..."):
-            #train_model(training_file_path)
-            result = predict_time(test_file_path)  # Predict time using predefined test data
-        st.write(f"Predicted Time to Breakdown: {result}")
-        st.success("Prediction complete!")
+         with st.spinner("Training the model and making predictions..."):
+             #train_model(training_file_path)
+             result = predict_time(test_file_path)  # Predict time using predefined test data
+         st.write(f"Predicted Time to Breakdown: {result}")
+         st.success("Prediction complete!")
 
 
 
@@ -575,59 +449,7 @@ def set_random_seed(seed=42):
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-# Function to train the LSTM autoencoder model
-def train_lstm_autoencoder_model(training_file_path, model_folder_path):
-    set_random_seed()
 
-    # Load and preprocess training data
-    df = pd.read_excel(training_file_path)
-    #df = df.dropna()
-
-    
-    column_names_train = df.columns[3:-1]
-    X = df[[col for col in column_names_train if not col.endswith(('_d2', '_t2'))]]
-
-    # Normalize data
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # Save the scaler
-    joblib.dump(scaler, os.path.join(model_folder_path, "lstm_auto_scaler.pkl"))
-
-    # Reshape to 3D for LSTM (samples, time_steps, features)
-    TIME_STEPS = 10
-    def create_sequences(data, time_steps=TIME_STEPS):
-        seqs = []
-        for i in range(len(data) - time_steps):
-            seqs.append(data[i:i + time_steps])
-        return np.array(seqs)
-    
-    X_seq = create_sequences(X_scaled)
-
-    # Define LSTM Autoencoder model
-    inputs = Input(shape=(TIME_STEPS, X_seq.shape[2]))
-    encoded = LSTM(64, activation="relu", return_sequences=False)(inputs)
-    decoded = RepeatVector(TIME_STEPS)(encoded)
-    decoded = LSTM(64, activation="relu", return_sequences=True)(decoded)
-    decoded = TimeDistributed(Dense(X_seq.shape[2]))(decoded)
-
-    autoencoder = Model(inputs, decoded)
-    autoencoder.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError())
-
-    # Train the model
-    autoencoder.fit(X_seq, X_seq, epochs=20, batch_size=64, shuffle=True)
-
-    # Save model
-    autoencoder.save(os.path.join(model_folder_path, "lstm_auto_model.h5"))
-
-    st.success("LSTM Autoencoder training completed and model saved!")
-
-import os
-
-import numpy as np
-import joblib
-import streamlit as st
-from tensorflow.keras.models import load_model
 
 def predict_lstm_autoencoder(test_file_path, model_folder_path):
     set_random_seed()
@@ -679,7 +501,7 @@ def predict_lstm_autoencoder(test_file_path, model_folder_path):
                 sensor_dict[sensor_id]["params"].add(feature_name)
 
     # Filter only sensors with anomaly count > 30
-    filtered_dict = {sensor: info for sensor, info in sensor_dict.items() if info["count"] > 30}
+    filtered_dict = {sensor: info for sensor, info in sensor_dict.items() if info["count"] > 5}
 
     if not filtered_dict:
         st.session_state["check_bd_clicked"] = False
@@ -734,16 +556,15 @@ if st.button("Check abnormality in sensors"):
 
 #..........................................Trend..............................
 
-
-
-
-
-
+import os
+import pandas as pd
 import matplotlib.pyplot as plt
+import streamlit as st
 
+# -------------------------------
 # Mapping for parameters to descriptive names
 parameter_mapping = {
-    'a2': 'Acceleration',#'a2', 'vv2', 'av2', 'hv2', 't2', 'd2
+    'a2': 'Acceleration',
     'av2': 'Axial Velocity',
     'vv2': 'Vertical Velocity',
     'hv2': 'Horizontal Velocity',
@@ -756,41 +577,60 @@ column_types_ui = ['All'] + list(parameter_mapping.values())
 # Reverse mapping for internal logic
 reverse_parameter_mapping = {v: k for k, v in parameter_mapping.items()}
 
+# -------------------------------
 # Streamlit UI
 st.title("Trend Visualization for Sensor Data")
 
-# Validate files
+
+# -------------------------------
+# Validate file paths
 if not os.path.exists(test_file_path) or not os.path.exists(threshold_file_path):
     st.error("Required files not found! Ensure the test and threshold file paths are correct.")
 else:
     try:
-        # Load test and threshold data
+        # Load Excel files
         test_df = pd.read_excel(test_file_path)
         threshold_df = pd.read_excel(threshold_file_path)
 
         if test_df.empty:
             st.warning("NO DATA in the test file.")
         else:
-            # Extract alternate sensor names
+            # Map asset to sensor name
             sensor_mapping = threshold_df[['Asset name', 'Sensor name']].drop_duplicates()
             asset_to_sensor = dict(zip(sensor_mapping['Asset name'], sensor_mapping['Sensor name']))
 
-            # UI filter with alternate names
+            # UI for sensor selection
             sensor_names = list(asset_to_sensor.values())
             selected_sensor_name = st.selectbox("Select the sensor", sensor_names, index=0)
-
-            # Map selected sensor name back to the asset name
             selected_asset = next(asset for asset, sensor in asset_to_sensor.items() if sensor == selected_sensor_name)
 
             selected_column_ui = st.selectbox("Select parameter", column_types_ui, index=0)
 
-            # Map the selected UI parameter back to its internal name
             if selected_column_ui == 'All':
                 selected_column = 'All'
             else:
                 selected_column = reverse_parameter_mapping[selected_column_ui]
 
-            # Check if test data contains the required columns
+            # Combine and parse date + time
+            test_df['Datetime'] = pd.to_datetime(test_df['Date'] + ' ' + test_df['Time'], format='%d %b %Y %I:%M %p')
+
+            # Extract available dates
+            available_dates = sorted(test_df['Datetime'].dt.date.unique())
+            available_dates_str = [date.strftime('%d %b %Y') for date in available_dates]
+            available_dates_str_with_all = ["All"] + available_dates_str
+
+            # UI: select specific date or all
+            selected_date_str = st.selectbox("Select Date", available_dates_str_with_all)
+
+            if selected_date_str != "All":
+                selected_date = pd.to_datetime(selected_date_str, format='%d %b %Y').date()
+                filtered_df = test_df[test_df["Datetime"].dt.date == selected_date]
+            else:
+                filtered_df = test_df
+
+            datetime_data = filtered_df["Datetime"]
+
+            # Prepare column names
             if selected_column == 'All':
                 asset_columns = [f"{selected_asset}_{param}" for param in parameter_mapping.keys()]
             else:
@@ -798,34 +638,27 @@ else:
 
             if not all(col in test_df.columns for col in asset_columns):
                 st.warning("Selected asset or columns not found in the test dataset.")
+            elif filtered_df.empty:
+                st.warning("No data available for the selected date.")
             else:
-                # Extract relevant data for the selected asset and column type(s)
-                time_data = test_df['Time']
-                date_data = test_df['Date']
-                datetime_data = pd.to_datetime(date_data + ' ' + time_data, format='%d %b %Y %I:%M %p')
-
-                # Determine start and end dates for the X-axis label
+                # Plot configuration
                 start_date = datetime_data.min().strftime('%d %b %Y')
                 end_date = datetime_data.max().strftime('%d %b %Y')
-
-                # Generate hourly tick labels
                 hourly_ticks = pd.date_range(start=datetime_data.min(), end=datetime_data.max(), freq='H')
 
-                # Prepare the plot
                 plt.figure(figsize=(12, 6))
 
                 if selected_column == 'All':
-                    # Plot all parameters for the selected asset
                     for param, display_name in parameter_mapping.items():
                         column_name = f"{selected_asset}_{param}"
-                        column_data = test_df[column_name]
+                        column_data = filtered_df[column_name]
                         plt.plot(datetime_data, column_data, linestyle='-', label=display_name)
                 else:
-                    # Plot the specific parameter
-                    column_data = test_df[f"{selected_asset}_{selected_column}"]
+                    column_name = f"{selected_asset}_{selected_column}"
+                    column_data = filtered_df[column_name]
                     plt.plot(datetime_data, column_data, linestyle='-', label=selected_column_ui)
 
-                    # Get threshold values for the selected asset and parameter
+                    # Plot thresholds
                     threshold_row = threshold_df[
                         (threshold_df['Asset name'] == selected_asset) &
                         (threshold_df['Parameter'] == selected_column)
@@ -833,24 +666,22 @@ else:
                     if not threshold_row.empty:
                         caution_value = threshold_row['Caution'].values[0]
                         warning_value = threshold_row['Warning'].values[0]
-
-                        # Add horizontal lines for caution and warning thresholds
                         plt.axhline(y=caution_value, color='orange', linestyle='--', label="Caution Threshold")
                         plt.axhline(y=warning_value, color='red', linestyle='--', label="Warning Threshold")
 
-                # Configure the plot
                 plt.xlabel(f"Time ({start_date} - {end_date})")
                 plt.ylabel("Values")
                 plt.title(f"Trend for {selected_sensor_name} - {selected_column_ui}")
                 plt.xticks(hourly_ticks, [tick.strftime('%I %p') for tick in hourly_ticks], rotation=45)
                 plt.grid(True)
-                plt.legend(loc='upper left')  # Place the legend in the top-left corner
+                plt.legend(loc='upper left')
                 plt.tight_layout()
 
-                # Display the plot
+                # Show plot
                 st.pyplot(plt)
 
-                # Add functionality for threshold crossing counts
+                # -------------------------------
+                # Threshold crossing count
                 warning_counts = {}
                 caution_counts = {}
 
@@ -861,41 +692,35 @@ else:
                         (threshold_df['Parameter'] == param)
                     ]
 
-                    if not threshold_row.empty:
+                    if not threshold_row.empty and column_name in filtered_df.columns:
                         caution_value = threshold_row['Caution'].values[0]
                         warning_value = threshold_row['Warning'].values[0]
-
-                        # Count how many times the parameter crosses caution and warning thresholds
-                        caution_counts[display_name] = (test_df[column_name] > caution_value).sum()
-                        warning_counts[display_name] = (test_df[column_name] > warning_value).sum()
+                        caution_counts[display_name] = (filtered_df[column_name] > caution_value).sum()
+                        warning_counts[display_name] = (filtered_df[column_name] > warning_value).sum()
                     else:
                         caution_counts[display_name] = 0
                         warning_counts[display_name] = 0
 
-                
-                
-                # Combine threshold crossing counts into a single table
-                combined_df = pd.DataFrame(
-                    {
-                        "Parameter": list(parameter_mapping.values()),
-                        "Caution Crossings": [caution_counts[display_name] for display_name in parameter_mapping.values()],
-                        "Warning Crossings": [warning_counts[display_name] for display_name in parameter_mapping.values()]
-                    }
-                )
-                
-               # Create a new table with Sensor Name displayed only once
+                # Create threshold count table
+                combined_df = pd.DataFrame({
+                    "Parameter": list(parameter_mapping.values()),
+                    "Caution Crossings": [caution_counts[p] for p in parameter_mapping.values()],
+                    "Warning Crossings": [warning_counts[p] for p in parameter_mapping.values()]
+                })
+
                 sensor_row = pd.DataFrame({"Parameter": ["Sensor Name"], "Caution Crossings": [selected_sensor_name], "Warning Crossings": [""]})
                 combined_df = pd.concat([sensor_row, combined_df], ignore_index=True)
 
-                # Adjust the column names
-                combined_df.columns = ["Parameter", "Caution Crossings", "Warning Crossings"]
-
-                # Display the combined table
-                st.markdown("### Threshold Crossing frequency")
+                st.markdown("### Threshold Crossing Frequency")
                 st.table(combined_df.T)
 
     except Exception as e:
         st.error(f"Error processing the files: {e}")
+
+
+
+
+
 
 
 
