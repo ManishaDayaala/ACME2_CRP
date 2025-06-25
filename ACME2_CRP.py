@@ -132,7 +132,7 @@ def process_data():
     # List of 12 unique asset names
     assets_list = [
         "ACME-2 GM-1 GB IP DE", "ACME-2 GM-1 MDE",
-            "ACME-2 GM-2 GB IP DE ", "ACME-2 GM-2 MDE", "ACME-2 GM-3 GB IP DE ", "ACME-2 GM-3 MDE", "ACME-2 GM-4 GB IP DE ", "ACME-2 GM-4 MDE"]
+            "ACME-2 GM-2 GB IP DE", "ACME-2 GM-2 MDE", "ACME-2 GM-3 GB IP DE", "ACME-2 GM-3 MDE", "ACME-2 GM-4 GB IP DE", "ACME-2 GM-4 MDE"]
 
 
     # Columns to extract for each asset, corresponding to F, I, L, O, R, U
