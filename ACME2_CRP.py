@@ -131,8 +131,8 @@ def process_data():
 
     # List of 12 unique asset names
     assets_list = [
-        "ACME-2 GM-1 GB IP DE", "ACME-2 GM-1 MDE",
-            "ACME-2 GM-2 GB IP DE", "ACME-2 GM-2 MDE", "ACME-2 GM-3 GB IP DE", "ACME-2 GM-3 MDE", "ACME-2 GM-4 GB IP DE", "ACME-2 GM-4 MDE"]
+        "ACME-2 GM-1 GB IP DE ", "ACME-2 GM-1 MDE",
+            "ACME-2 GM-2 GB IP DE ", "ACME-2 GM-2 MDE", "ACME-2 GM-3 GB IP DE ", "ACME-2 GM-3 MDE", "ACME-2 GM-4 GB IP DE ", "ACME-2 GM-4 MDE"]
 
 
     # Columns to extract for each asset, corresponding to F, I, L, O, R, U
@@ -591,6 +591,8 @@ else:
         # Load Excel files
         test_df = pd.read_excel(test_file_path)
         threshold_df = pd.read_excel(threshold_file_path)
+
+        test_df.columns = test_df.columns.str.replace(r'\s+_', '_', regex=True).str.strip()
 
         if test_df.empty:
             st.warning("NO DATA in the test file.")
